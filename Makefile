@@ -1,19 +1,19 @@
-CC ?= g++
-CFLAGS += -std=c++20 $(shell pkg-config fuse3 --cflags) -I include/
+CXX ?= g++
+CXXFLAGS += -std=c++20 $(shell pkg-config fuse3 --cflags) -I include/
 LDFLAGS += $(shell pkg-config fuse3 --libs) -l OpenCL
 
 ifeq ($(DEBUG), 1)
-	CFLAGS += -g -DDEBUG -Wall -Werror
+	CXXFLAGS += -g -DDEBUG -Wall -Werror
 endif
 
 bin/vramfs: build/util.o build/memory.o build/entry.o build/file.o build/dir.o build/symlink.o build/vramfs.o | bin
-	$(CC) -o $@ $^ $(LDFLAGS)
+	$(CXX) -o $@ $^ $(LDFLAGS)
 
 build bin:
 	@mkdir -p $@
 
 build/%.o: src/%.cpp | build
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 .PHONY: clean
 clean:

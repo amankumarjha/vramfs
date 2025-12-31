@@ -29,6 +29,13 @@ bin/cuda_bench: tools/nbd_backing/cuda_bench.cpp | bin
 bin/nbdkit_cuda_plugin.so: tools/nbd_backing/nbdkit_cuda_plugin.cpp src/cuda_memory.cpp | bin
 	$(CXX) $(CXXFLAGS) -fPIC -shared -o $@ $^ $(LDFLAGS)
 
+bin/test_cuda: tests/test_cuda_memory.cpp src/cuda_memory.cpp | bin
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test
+test: bin/test_cuda
+	./bin/test_cuda
+
 .PHONY: clean
 clean:
 	rm -rf build/ bin/

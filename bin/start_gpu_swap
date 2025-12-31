@@ -30,66 +30,55 @@ start_qemu_nbd() {
     nohup sudo qemu-nbd --format=raw --persistent --connect=${NBD_DEVICE} nbd://127.0.0.1:${PORT} >>"${LOG}" 2>&1 &
 }
 
-wait_for_port() {
-    local i=0
-    while ! ss -ltn | awk '{print $4}' | grep -q ":${PORT}\$"; do
-        i=$((i+1))
-        if [ $i -gt ${RETRIES} ]; then
-            echo "timeout waiting for nbdkit port ${PORT}" >&2
-            return 1
-        fi
-        sleep ${RETRY_DELAY}
-    done
-}
+#!/usr/bin/env bash
+set -euo pipefail
 
-wait_for_device() {
-    local i=0
-    while [ ! -b "${NBD_DEVICE}" ]; do
-        i=$((i+1))
-        if [ $i -gt ${RETRIES} ]; then
-            echo "timeout waiting for ${NBD_DEVICE}" >&2
-            return 1
-        fi
-        sleep ${RETRY_DELAY}
-    done
-    i=0
-    while [ "$(sudo blockdev --getsize64 "${NBD_DEVICE}" 2>/dev/null || echo 0)" -le 65536 ]; do
-        i=$((i+1))
-        if [ $i -gt ${RETRIES} ]; then
-            echo "timeout waiting for ${NBD_DEVICE} size" >&2
-            return 1
-        fi
-        sleep ${RETRY_DELAY}
-    done
-}
+# start_gpu_swap: start nbdkit, attach qemu-nbd, create and enable swap.
+# This script fails fast on any error and logs steps to a logfile.
+PORT=${PORT:-10809}
+NBD_DEVICE=${NBD_DEVICE:-/dev/nbd1}
+PLUGIN=${PLUGIN:-$(pwd)/bin/nbdkit_cuda_plugin.so}
+LOG=${LOG:-/tmp/vramfs_nbdkit.log}
 
-main() {
-    if [ ! -f "${PLUGIN}" ]; then
-        echo "Plugin ${PLUGIN} not found; build with: make bin/nbdkit_cuda_plugin.so USE_CUDA=1" >&2
-        exit 2
-    fi
+log() { echo "$(date -Is) [start_gpu_swap] $*" | tee -a "$LOG"; }
 
-    mkdir -p "$(dirname "${LOG}")"
-    touch "${LOG}" 2>/dev/null || sudo touch "${LOG}"
-    chmod a+rw "${LOG}" 2>/dev/null || sudo chmod a+rw "${LOG}"
+if [ ! -f "$PLUGIN" ]; then
+  echo "$(date -Is) [start_gpu_swap] ERROR: plugin $PLUGIN not found" | tee -a "$LOG" >&2
+  exit 2
+fi
 
-    start_nbdkit
-    wait_for_port
-    start_qemu_nbd
-    wait_for_device
+log "Starting nbdkit with plugin $PLUGIN on port $PORT"
+nohup nbdkit -f -v -p ${PORT} "$PLUGIN" >>"$LOG" 2>&1 &
 
-    if [ "${SKIP_SWAPON:-0}" = "1" ]; then
-        echo "SKIP_SWAPON=1; skipping mkswap/swapon"
-    else
+log "Waiting for nbdkit to listen on port $PORT"
+for i in {1..50}; do
+  ss -ltn | grep -q ":${PORT}" && break
+  sleep 0.1
+done
+ss -ltn | grep -q ":${PORT}" || { log "nbdkit did not start"; exit 1; }
+
+log "Loading nbd kernel module and attaching $NBD_DEVICE"
+sudo modprobe nbd max_part=8
+sudo qemu-nbd --format=raw --persistent --connect=${NBD_DEVICE} nbd://127.0.0.1:${PORT} >>"$LOG" 2>&1
+
+log "Waiting for device ${NBD_DEVICE} and valid size"
+for i in {1..50}; do
+  [ -b "$NBD_DEVICE" ] || { sleep 0.1; continue; }
+  size=$(sudo blockdev --getsize64 "$NBD_DEVICE" 2>/dev/null || echo 0)
+  [ "$size" -gt 65536 ] && break
+  sleep 0.1
+done
+size=$(sudo blockdev --getsize64 "$NBD_DEVICE" 2>/dev/null || echo 0)
+[ "$size" -gt 65536 ] || { log "device $NBD_DEVICE has invalid size ($size)"; exit 1; }
+
+log "Creating swap on $NBD_DEVICE"
+sudo file -s "$NBD_DEVICE" | tee -a "$LOG"
+sudo mkswap -f "$NBD_DEVICE" | tee -a "$LOG"
+sudo swapon -p 1 "$NBD_DEVICE" | tee -a "$LOG"
+
+log "Swap enabled"
+sudo swapon --show | tee -a "$LOG"
+
+log "start_gpu_swap completed"
+exit 0
         echo "Creating swap on ${NBD_DEVICE} (if not already)"
-        sudo file -s "${NBD_DEVICE}" || true
-        sudo mkswap -f "${NBD_DEVICE}" || true
-        sudo swapon -p 1 "${NBD_DEVICE}" || true
-    fi
-    sleep 0.1
-    sudo swapon --show || true
-
-    echo "Started and enabled swap on ${NBD_DEVICE}. Logs: ${LOG}"
-}
-
-main "$@"

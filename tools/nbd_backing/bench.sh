@@ -10,7 +10,7 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 PLUGIN=${PLUGIN:-$ROOT/bin/nbdkit_cuda_plugin.so}
 NBD_PORT=${NBD_PORT:-10809}
 NBD_DEVICE=${NBD_DEVICE:-/dev/nbd1}
-LOG=${LOG:-/tmp/vramfs_bench.log}
+LOG=${LOG:-/tmp/vramswap_bench.log}
 
 log() { echo "$(date -Is) [bench] $*" | tee -a "$LOG"; }
 

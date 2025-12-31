@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# requirements.sh - verify environment for vramfs NBD CUDA plugin
-LOG=${LOG:-/tmp/vramfs_requirements.log}
+# requirements.sh - verify environment for vramswap NBD CUDA plugin
+LOG=${LOG:-/tmp/vramswap_requirements.log}
 echo "$(date -Is) [req] starting" | tee -a "$LOG"
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "$(date -Is) [req] MISSING: $1" | tee -a "$LOG"; exit 2; } }

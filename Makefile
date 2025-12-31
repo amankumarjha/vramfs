@@ -11,7 +11,7 @@ ifeq ($(USE_CUDA),1)
     LDFLAGS += -lcudart
 endif
 
-bin/vramfs: build/util.o build/memory.o build/entry.o build/file.o build/dir.o build/symlink.o build/vramfs.o | bin
+bin/vramswap: build/util.o build/memory.o build/entry.o build/file.o build/dir.o build/symlink.o build/vramswap.o | bin
 	$(CXX) -o $@ $^ $(LDFLAGS)
 
 build bin:

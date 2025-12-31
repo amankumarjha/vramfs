@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=/home/aman/Desktop/vramfs/bin/start_gpu_swap
+ExecStart=/home/aman/Desktop/vramswap/bin/start_gpu_swap
 Restart=on-failure
 RestartSec=5
 StandardOutput=syslog
@@ -14,7 +14,7 @@ StandardError=syslog
 [Install]
 WantedBy=multi-user.target
 [Unit]
-Description=vramfs NBD server (GPU-backed)
+Description=vramswap NBD server (GPU-backed)
 After=network.target
 
 [Service]

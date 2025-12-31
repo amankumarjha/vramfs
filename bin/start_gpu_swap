@@ -1,5 +1,3 @@
-echo "Active swap:" 
-echo "Press Ctrl-C to stop and cleanup"
 #!/usr/bin/env bash
 # Idempotent starter for GPU-backed NBD swap (non-blocking)
 set -euo pipefail
@@ -7,38 +5,7 @@ set -euo pipefail
 PORT=${PORT:-10809}
 NBD_DEVICE=${NBD_DEVICE:-/dev/nbd1}
 PLUGIN=${PLUGIN:-$(pwd)/bin/nbdkit_cuda_plugin.so}
-LOG=${LOG:-/tmp/vramfs_nbdkit.log}
-RETRIES=${RETRIES:-30}
-RETRY_DELAY=${RETRY_DELAY:-0.2}
-
-start_nbdkit() {
-    if pgrep -f "nbdkit .*${PLUGIN}" >/dev/null; then
-        echo "nbdkit already running"
-        return
-    fi
-    echo "Starting nbdkit with plugin $PLUGIN on TCP port $PORT (log: $LOG)"
-    nohup nbdkit -f -v -p ${PORT} "${PLUGIN}" >>"${LOG}" 2>&1 &
-}
-
-start_qemu_nbd() {
-    if pgrep -f "qemu-nbd .*127.0.0.1:${PORT}" >/dev/null; then
-        echo "qemu-nbd already running"
-        return
-    fi
-    echo "Starting qemu-nbd to attach ${NBD_DEVICE}"
-    sudo modprobe nbd max_part=8
-    nohup sudo qemu-nbd --format=raw --persistent --connect=${NBD_DEVICE} nbd://127.0.0.1:${PORT} >>"${LOG}" 2>&1 &
-}
-
-#!/usr/bin/env bash
-set -euo pipefail
-
-# start_gpu_swap: start nbdkit, attach qemu-nbd, create and enable swap.
-# This script fails fast on any error and logs steps to a logfile.
-PORT=${PORT:-10809}
-NBD_DEVICE=${NBD_DEVICE:-/dev/nbd1}
-PLUGIN=${PLUGIN:-$(pwd)/bin/nbdkit_cuda_plugin.so}
-LOG=${LOG:-/tmp/vramfs_nbdkit.log}
+LOG=${LOG:-/tmp/vramswap_nbdkit.log}
 
 log() { echo "$(date -Is) [start_gpu_swap] $*" | tee -a "$LOG"; }
 
@@ -47,7 +14,18 @@ if [ ! -f "$PLUGIN" ]; then
   exit 2
 fi
 
+# Ensure the log file exists and is writable. Use sudo to create/change perms
+# so the script can be run as a non-root user which later invokes sudo.
+if [ ! -e "$LOG" ]; then
+  sudo sh -c "touch '$LOG'" || true
+  sudo sh -c "chmod a+rw '$LOG'" || true
+fi
+if [ ! -w "$LOG" ]; then
+  sudo sh -c "chmod a+rw '$LOG'" || true
+fi
+
 log "Starting nbdkit with plugin $PLUGIN on port $PORT"
+# start nbdkit (run as current user). Redirect to logfile which we've ensured is writable.
 nohup nbdkit -f -v -p ${PORT} "$PLUGIN" >>"$LOG" 2>&1 &
 
 log "Waiting for nbdkit to listen on port $PORT"
@@ -81,4 +59,3 @@ sudo swapon --show | tee -a "$LOG"
 
 log "start_gpu_swap completed"
 exit 0
-        echo "Creating swap on ${NBD_DEVICE} (if not already)"

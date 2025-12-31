@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # code_tests.sh - build plugin and run a small smoke test (no swap enablement)
-LOG=${LOG:-/tmp/vramfs_code_tests.log}
+LOG=${LOG:-/tmp/vramswap_code_tests.log}
 echo "$(date -Is) [code] starting" | tee -a "$LOG"
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -34,7 +34,7 @@ done
 
 echo "$(date -Is) [code] Running small I/O check" | tee -a "$LOG"
 sudo dd if=/dev/zero of=${NBD_DEVICE} bs=64K count=2 conv=fdatasync 2>&1 | tee -a "$LOG"
-sudo dd if=${NBD_DEVICE} of=/tmp/vramfs_code_test.dump bs=64K count=2 2>&1 | tee -a "$LOG"
+sudo dd if=${NBD_DEVICE} of=/tmp/vramswap_code_test.dump bs=64K count=2 2>&1 | tee -a "$LOG"
 
 echo "$(date -Is) [code] Cleaning up" | tee -a "$LOG"
 sudo qemu-nbd -d ${NBD_DEVICE} >>"$LOG" 2>&1 || true

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # integration.sh - attach NBD device, run I/O tests, and detach (no swapon)
-LOG=${LOG:-/tmp/vramfs_integration.log}
+LOG=${LOG:-/tmp/vramswap_integration.log}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 PLUGIN=${PLUGIN:-$ROOT/bin/nbdkit_cuda_plugin.so}
 PORT=${PORT:-10809}

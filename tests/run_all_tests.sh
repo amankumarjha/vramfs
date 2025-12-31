@@ -14,5 +14,8 @@ tests/code_tests.sh
 echo "Running integration tests"
 tests/integration.sh
 
+echo "Running swap mount test"
+tests/test_swap_mount.sh
+
 echo "All tests completed"
 exit 0

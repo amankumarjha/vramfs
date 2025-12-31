@@ -14,6 +14,8 @@ sleep 0.2
 
 echo "$(date -Is) [int] Attaching ${NBD_DEVICE}" | tee -a "$LOG"
 sudo modprobe nbd max_part=8
+sudo qemu-nbd --disconnect ${NBD_DEVICE} >/dev/null 2>&1 || true
+sudo swapoff ${NBD_DEVICE} >/dev/null 2>&1 || true
 sudo qemu-nbd --format=raw --persistent --connect=${NBD_DEVICE} nbd://127.0.0.1:${PORT} >>"$LOG" 2>&1
 
 for i in {1..50}; do

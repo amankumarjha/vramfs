@@ -25,8 +25,9 @@ if [ ! -w "$LOG" ]; then
 fi
 
 log "Starting nbdkit with plugin $PLUGIN on port $PORT"
-# start nbdkit (run as current user). Redirect to logfile which we've ensured is writable.
-nohup nbdkit -f -v -p ${PORT} "$PLUGIN" >>"$LOG" 2>&1 &
+# start nbdkit (run as current user). Allow passing plugin options via PLUGIN_ARGS.
+# Redirect output to logfile which we've ensured is writable.
+nohup nbdkit -f -v -p ${PORT} "$PLUGIN" ${PLUGIN_ARGS:-} >>"$LOG" 2>&1 &
 
 log "Waiting for nbdkit to listen on port $PORT"
 for i in {1..50}; do
@@ -36,6 +37,13 @@ done
 ss -ltn | grep -q ":${PORT}" || { log "nbdkit did not start"; exit 1; }
 
 log "Loading nbd kernel module and attaching $NBD_DEVICE"
+# If the device is already used as swap, disable it first so we can reattach.
+if sudo swapon --show=NAME --noheadings | grep -qx "$NBD_DEVICE"; then
+  log "Detected $NBD_DEVICE already active as swap — running swapoff"
+  sudo swapoff "$NBD_DEVICE" >>"$LOG" 2>&1 || true
+fi
+# If qemu-nbd left a previous connection, disconnect it to avoid attach failures.
+sudo qemu-nbd --disconnect ${NBD_DEVICE} >/dev/null 2>&1 || true
 sudo modprobe nbd max_part=8
 sudo qemu-nbd --format=raw --persistent --connect=${NBD_DEVICE} nbd://127.0.0.1:${PORT} >>"$LOG" 2>&1
 

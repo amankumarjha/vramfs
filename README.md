@@ -7,7 +7,7 @@ Key components
 - `src/cuda_memory.cpp`, `include/cuda_memory.hpp` — CUDA backend allocator + block abstraction.
 - `bin/start_gpu_swap` — strict, fail-fast script: start nbdkit, attach `/dev/nbdX`, create and enable swap.
 - `tools/nbd_backing/bench.sh` — strict bench: attach, run smoke I/O, create swap, log to `/tmp/vramswap_bench.log`.
-- `tests/` — helper test scripts and a small C++ unit test for the memory backend.
+- `tests/` — helper test scriperts and a small C++ unit test for the memory backend.
 
 Prerequisites
 - `nbdkit`, `qemu-nbd`, `make`, `g++`, and `sudo` must be available.

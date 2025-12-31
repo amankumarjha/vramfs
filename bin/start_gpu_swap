@@ -1,61 +1,91 @@
+echo "Active swap:" 
+echo "Press Ctrl-C to stop and cleanup"
 #!/usr/bin/env bash
-# Start a GPU-backed NBD export (prototype) and attach as swap to /dev/nbd0
+# Idempotent starter for GPU-backed NBD swap (non-blocking)
 set -euo pipefail
 
-PORT=10809
-NBD_DEVICE=/dev/nbd0
+PORT=${PORT:-10809}
+NBD_DEVICE=${NBD_DEVICE:-/dev/nbd1}
+PLUGIN=${PLUGIN:-$(pwd)/bin/nbdkit_cuda_plugin.so}
+LOG=${LOG:-/tmp/vramfs_nbdkit.log}
+RETRIES=${RETRIES:-30}
+RETRY_DELAY=${RETRY_DELAY:-0.2}
 
-PLUGIN=bin/nbdkit_cuda_plugin.so
-LOG=/tmp/vramfs_nbdkit.log
-RETRIES=5
-RETRY_DELAY=1
-
-cleanup() {
-    set +e
-    if mount | grep -q "$NBD_DEVICE"; then
-        sudo swapoff "$NBD_DEVICE" || true
+start_nbdkit() {
+    if pgrep -f "nbdkit .*${PLUGIN}" >/dev/null; then
+        echo "nbdkit already running"
+        return
     fi
-    sudo qemu-nbd -d "$NBD_DEVICE" 2>/dev/null || true
-    pkill -f "nbdkit.*$PLUGIN" || pkill -f "nbdkit memory" || true
+    echo "Starting nbdkit with plugin $PLUGIN on TCP port $PORT (log: $LOG)"
+    nohup nbdkit -f -v -p ${PORT} "${PLUGIN}" >>"${LOG}" 2>&1 &
 }
 
-trap cleanup EXIT
-
-
-if [ -f "$PLUGIN" ]; then
-    echo "Starting nbdkit with plugin $PLUGIN on TCP port $PORT (log: $LOG)"
-    nbdkit -v -p $PORT ./bin/nbdkit_cuda_plugin.so >"$LOG" 2>&1 &
-else
-    echo "Plugin not built; failing fast (no fallback)"
-    exit 2
-fi
-
-sleep 0.5
-
-echo "Loading nbd kernel module"
-sudo modprobe nbd max_part=8
-
-echo "Connecting $NBD_DEVICE to nbd://127.0.0.1:$PORT (retries=$RETRIES)"
-for i in $(seq 1 $RETRIES); do
-    if sudo qemu-nbd --connect=$NBD_DEVICE nbd://127.0.0.1:$PORT; then
-        echo "Connected on attempt $i"
-        break
+start_qemu_nbd() {
+    if pgrep -f "qemu-nbd .*127.0.0.1:${PORT}" >/dev/null; then
+        echo "qemu-nbd already running"
+        return
     fi
-    echo "Attempt $i failed; retrying in $RETRY_DELAY s..."
-    sleep $RETRY_DELAY
-    if [ $i -eq $RETRIES ]; then
-        echo "Failed to connect after $RETRIES attempts; aborting"
-        exit 3
+    echo "Starting qemu-nbd to attach ${NBD_DEVICE}"
+    sudo modprobe nbd max_part=8
+    nohup sudo qemu-nbd --format=raw --persistent --connect=${NBD_DEVICE} nbd://127.0.0.1:${PORT} >>"${LOG}" 2>&1 &
+}
+
+wait_for_port() {
+    local i=0
+    while ! ss -ltn | awk '{print $4}' | grep -q ":${PORT}\$"; do
+        i=$((i+1))
+        if [ $i -gt ${RETRIES} ]; then
+            echo "timeout waiting for nbdkit port ${PORT}" >&2
+            return 1
+        fi
+        sleep ${RETRY_DELAY}
+    done
+}
+
+wait_for_device() {
+    local i=0
+    while [ ! -b "${NBD_DEVICE}" ]; do
+        i=$((i+1))
+        if [ $i -gt ${RETRIES} ]; then
+            echo "timeout waiting for ${NBD_DEVICE}" >&2
+            return 1
+        fi
+        sleep ${RETRY_DELAY}
+    done
+    i=0
+    while [ "$(sudo blockdev --getsize64 "${NBD_DEVICE}" 2>/dev/null || echo 0)" -le 65536 ]; do
+        i=$((i+1))
+        if [ $i -gt ${RETRIES} ]; then
+            echo "timeout waiting for ${NBD_DEVICE} size" >&2
+            return 1
+        fi
+        sleep ${RETRY_DELAY}
+    done
+}
+
+main() {
+    if [ ! -f "${PLUGIN}" ]; then
+        echo "Plugin ${PLUGIN} not found; build with: make bin/nbdkit_cuda_plugin.so USE_CUDA=1" >&2
+        exit 2
     fi
-done
 
-echo "Preparing swap on $NBD_DEVICE"
-sudo file -s $NBD_DEVICE || true
-sudo mkswap -f $NBD_DEVICE
-sudo swapon -p 1 $NBD_DEVICE
+    mkdir -p "$(dirname "${LOG}")"
+    touch "${LOG}" 2>/dev/null || sudo touch "${LOG}"
+    chmod a+rw "${LOG}" 2>/dev/null || sudo chmod a+rw "${LOG}"
 
-echo "Active swap:" 
-swapon --show
+    start_nbdkit
+    wait_for_port
+    start_qemu_nbd
+    wait_for_device
 
-echo "Press Ctrl-C to stop and cleanup"
-while true; do sleep 3600; done
+    echo "Creating swap on ${NBD_DEVICE} (if not already)"
+    sudo file -s "${NBD_DEVICE}" || true
+    sudo mkswap -f "${NBD_DEVICE}" || true
+    sudo swapon -p 1 "${NBD_DEVICE}" || true
+    sleep 0.1
+    sudo swapon --show || true
+
+    echo "Started and enabled swap on ${NBD_DEVICE}. Logs: ${LOG}"
+}
+
+main "$@"

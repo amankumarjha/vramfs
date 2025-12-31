@@ -37,7 +37,7 @@ namespace vram {
         // Block abstraction
         class block {
         public:
-            static const size_t size = 128 * 1024; // default, configurable later
+            static const size_t size = 64 * 1024; // must be <= 64KiB for nbdkit
 
             // Construct with an allocated device pointer
             explicit block(void* device_ptr);

@@ -28,8 +28,6 @@ static int64_t plugin_size_bytes = 64LL * 1024 * 1024; // default 64MiB
 struct BlockEntry {
     block_ref b;
     std::mutex m;
-    std::atomic<int> pending{0};
-    std::atomic<uint64_t> last_access{0};
 };
 
 static std::vector<std::shared_ptr<BlockEntry>> backing_map;
@@ -41,11 +39,6 @@ static size_t num_blocks() {
 
 static std::atomic<size_t> total_allocated_blocks{0};
 static size_t max_allocated_blocks = 0; /* 0 = no limit */
-
-static uint64_t now_ns() {
-    return (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-}
 
 static void ensure_init()
 {
@@ -123,12 +116,7 @@ static int vram_pread(void *handle, void *buf, uint32_t count, uint64_t offset, 
             memset(out, 0, toread);
         } else {
             std::lock_guard<std::mutex> lg(entry->m);
-            if (entry->pending.load(std::memory_order_acquire) > 0) {
-                entry->b->sync();
-                entry->pending.store(0, std::memory_order_release);
-            }
             entry->b->read((off_t)block_off, toread, out);
-            entry->last_access.store(now_ns(), std::memory_order_relaxed);
         }
 
         out += toread;
@@ -169,40 +157,16 @@ static int vram_pwrite(void *handle, const void *buf, uint32_t count, uint64_t o
             entry = backing_map[block_idx];
         }
 
-        // allocate device block if missing
+        // allocate device block if missing and perform synchronous write
         {
             std::lock_guard<std::mutex> lg(entry->m);
             if (!entry->b) {
-                if (max_allocated_blocks && total_allocated_blocks.load() >= max_allocated_blocks) {
-                    // attempt simple eviction: find any block not pending
-                    bool evicted = false;
-                    std::lock_guard<std::mutex> lg2(backing_map_mutex);
-                    for (size_t i = 0; i < backing_map.size(); ++i) {
-                        if (i == block_idx) continue;
-                        auto &e_ptr = backing_map[i];
-                        if (!e_ptr) continue;
-                        if (!e_ptr->m.try_lock()) continue;
-                        std::unique_lock<std::mutex> lg3(e_ptr->m, std::adopt_lock);
-                        if (!e_ptr->b) continue;
-                        if (e_ptr->pending.load() == 0) {
-                            e_ptr->b.reset();
-                            total_allocated_blocks.fetch_sub(1);
-                            evicted = true;
-                            break;
-                        }
-                    }
-                    if (!evicted) return -ENOSPC;
-                }
-
                 entry->b = allocate();
                 if (!entry->b) return -ENOSPC;
                 total_allocated_blocks.fetch_add(1);
             }
-
-            // mark pending write and perform async write
-            entry->pending.fetch_add(1, std::memory_order_acq_rel);
-            entry->b->write((off_t)block_off, towrite, in, true);
-            entry->last_access.store(now_ns(), std::memory_order_relaxed);
+            entry->b->write((off_t)block_off, towrite, in, false);
+            entry->b->sync();
         }
 
         in += towrite;
@@ -221,10 +185,7 @@ static int vram_flush(void *handle, uint32_t flags)
     for (auto &entry_ptr : backing_map) {
         if (!entry_ptr) continue;
         std::lock_guard<std::mutex> lg2(entry_ptr->m);
-        if (entry_ptr->b && entry_ptr->pending.load(std::memory_order_acquire) > 0) {
-            entry_ptr->b->sync();
-            entry_ptr->pending.store(0, std::memory_order_release);
-        }
+        if (entry_ptr->b) entry_ptr->b->sync();
     }
     return 0;
 }
@@ -232,9 +193,11 @@ static int vram_flush(void *handle, uint32_t flags)
 static int vram_block_size(void *handle, uint32_t *minimum, uint32_t *preferred, uint32_t *maximum)
 {
     (void)handle;
-    if (minimum) *minimum = (uint32_t)block::size;
-    if (preferred) *preferred = (uint32_t)block::size;
-    if (maximum) *maximum = (uint32_t)block::size;
+    uint32_t m = (uint32_t)block::size;
+    if (minimum) *minimum = m;
+    if (preferred) *preferred = m;
+    if (maximum) *maximum = m;
+    nbdkit_debug("vram-cuda: block_size reply min=%u pref=%u max=%u", m, m, m);
     return 0;
 }
 

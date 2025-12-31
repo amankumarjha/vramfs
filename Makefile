@@ -6,6 +6,11 @@ ifeq ($(DEBUG), 1)
 	CXXFLAGS += -g -DDEBUG -Wall -Werror
 endif
 
+ifeq ($(USE_CUDA),1)
+    CXXFLAGS += -DUSE_CUDA
+    LDFLAGS += -lcudart
+endif
+
 bin/vramfs: build/util.o build/memory.o build/entry.o build/file.o build/dir.o build/symlink.o build/vramfs.o | bin
 	$(CXX) -o $@ $^ $(LDFLAGS)
 
@@ -14,6 +19,15 @@ build bin:
 
 build/%.o: src/%.cpp | build
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+bin/nbd_server: tools/nbd_backing/nbd_server.cpp | bin
+	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
+
+bin/cuda_bench: tools/nbd_backing/cuda_bench.cpp | bin
+	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
+
+bin/nbdkit_cuda_plugin.so: tools/nbd_backing/nbdkit_cuda_plugin.cpp src/cuda_memory.cpp | bin
+	$(CXX) $(CXXFLAGS) -fPIC -shared -o $@ $^ $(LDFLAGS)
 
 .PHONY: clean
 clean:

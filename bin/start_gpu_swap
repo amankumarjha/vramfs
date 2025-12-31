@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Start a GPU-backed NBD export (prototype) and attach as swap to /dev/nbd0
+set -euo pipefail
+
+PORT=10809
+NBD_DEVICE=/dev/nbd0
+
+PLUGIN=bin/nbdkit_cuda_plugin.so
+LOG=/tmp/vramfs_nbdkit.log
+RETRIES=5
+RETRY_DELAY=1
+
+cleanup() {
+    set +e
+    if mount | grep -q "$NBD_DEVICE"; then
+        sudo swapoff "$NBD_DEVICE" || true
+    fi
+    sudo qemu-nbd -d "$NBD_DEVICE" 2>/dev/null || true
+    pkill -f "nbdkit.*$PLUGIN" || pkill -f "nbdkit memory" || true
+}
+
+trap cleanup EXIT
+
+
+if [ -f "$PLUGIN" ]; then
+    echo "Starting nbdkit with plugin $PLUGIN on TCP port $PORT (log: $LOG)"
+    nbdkit -v -p $PORT ./bin/nbdkit_cuda_plugin.so >"$LOG" 2>&1 &
+else
+    echo "Plugin not built; failing fast (no fallback)"
+    exit 2
+fi
+
+sleep 0.5
+
+echo "Loading nbd kernel module"
+sudo modprobe nbd max_part=8
+
+echo "Connecting $NBD_DEVICE to nbd://127.0.0.1:$PORT (retries=$RETRIES)"
+for i in $(seq 1 $RETRIES); do
+    if sudo qemu-nbd --connect=$NBD_DEVICE nbd://127.0.0.1:$PORT; then
+        echo "Connected on attempt $i"
+        break
+    fi
+    echo "Attempt $i failed; retrying in $RETRY_DELAY s..."
+    sleep $RETRY_DELAY
+    if [ $i -eq $RETRIES ]; then
+        echo "Failed to connect after $RETRIES attempts; aborting"
+        exit 3
+    fi
+done
+
+echo "Preparing swap on $NBD_DEVICE"
+sudo file -s $NBD_DEVICE || true
+sudo mkswap -f $NBD_DEVICE
+sudo swapon -p 1 $NBD_DEVICE
+
+echo "Active swap:" 
+swapon --show
+
+echo "Press Ctrl-C to stop and cleanup"
+while true; do sleep 3600; done

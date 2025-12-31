@@ -22,8 +22,9 @@ if [ ! -f "$PLUGIN" ]; then
   exit 2
 fi
 
-echo "Starting nbdkit and attaching device via bin/start_gpu_swap"
-bin/start_gpu_swap || true
+echo "Ensuring /dev/nbd1 is not active swap, then attaching (skip swapon for smoke I/O)"
+sudo swapoff /dev/nbd1 2>/dev/null || true
+SKIP_SWAPON=1 bin/start_gpu_swap || true
 
 # ensure log file exists and is writable
 mkdir -p "$(dirname "$LOG")"
@@ -87,8 +88,11 @@ echo "Running smoke I/O test"
 # If the device is currently used as swap, avoid writing to it; perform a read-only smoke test instead.
 if swapon --show=NAME | grep -q "^$NBD_DEV$"; then
   echo "$NBD_DEV is active swap; running read-only smoke test (retries)"
-  TMP_DUMP=/tmp/nbd_smoke.dump
-  rm -f "$TMP_DUMP"
+  # short pause to avoid racing device readiness
+  sleep 0.5
+  TMP_DUMP="$(mktemp /tmp/nbd_smoke.XXXXXX)"
+  # ensure we can remove the temp file even if created by root dd
+  sudo chown $(id -u):$(id -g) "$TMP_DUMP" 2>/dev/null || true
   success=0
   for i in 1 2 3; do
     sudo dd if=$NBD_DEV of="$TMP_DUMP" bs=64k count=16 iflag=direct >/dev/null 2>&1 || true
@@ -97,12 +101,13 @@ if swapon --show=NAME | grep -q "^$NBD_DEV$"; then
       break
     fi
     echo "read attempt $i failed; retrying..."
-    sleep 0.2
+    sleep 0.5
   done
   if [ $success -eq 1 ]; then
     ls -l "$TMP_DUMP"
+    rm -f "$TMP_DUMP" || true
   else
-    echo "read smoke failed after retries"
+    echo "read smoke failed after retries (temp: $TMP_DUMP)"
   fi
 else
   if command -v fio >/dev/null 2>&1; then
@@ -114,5 +119,9 @@ else
     ls -l /tmp/nbd_smoke.dump || true
   fi
 fi
+
+# Now enable swap on the device (after smoke I/O)
+echo "Enabling swap on device"
+bin/start_gpu_swap || true
 
 echo "Done; logs: $LOG"

@@ -78,10 +78,14 @@ main() {
     start_qemu_nbd
     wait_for_device
 
-    echo "Creating swap on ${NBD_DEVICE} (if not already)"
-    sudo file -s "${NBD_DEVICE}" || true
-    sudo mkswap -f "${NBD_DEVICE}" || true
-    sudo swapon -p 1 "${NBD_DEVICE}" || true
+    if [ "${SKIP_SWAPON:-0}" = "1" ]; then
+        echo "SKIP_SWAPON=1; skipping mkswap/swapon"
+    else
+        echo "Creating swap on ${NBD_DEVICE} (if not already)"
+        sudo file -s "${NBD_DEVICE}" || true
+        sudo mkswap -f "${NBD_DEVICE}" || true
+        sudo swapon -p 1 "${NBD_DEVICE}" || true
+    fi
     sleep 0.1
     sudo swapon --show || true
 

@@ -6,6 +6,7 @@ PORT=${PORT:-10809}
 NBD_DEVICE=${NBD_DEVICE:-/dev/nbd1}
 PLUGIN=${PLUGIN:-$(pwd)/bin/nbdkit_cuda_plugin.so}
 LOG=${LOG:-/tmp/vramswap_nbdkit.log}
+SWAP_PRIO=${SWAP_PRIO:-100}
 
 log() { echo "$(date -Is) [start_gpu_swap] $*" | tee -a "$LOG"; }
 
@@ -57,10 +58,10 @@ done
 size=$(sudo blockdev --getsize64 "$NBD_DEVICE" 2>/dev/null || echo 0)
 [ "$size" -gt 65536 ] || { log "device $NBD_DEVICE has invalid size ($size)"; exit 1; }
 
-log "Creating swap on $NBD_DEVICE"
+log "Creating swap on $NBD_DEVICE (priority $SWAP_PRIO)"
 sudo file -s "$NBD_DEVICE" | tee -a "$LOG"
 sudo mkswap -f "$NBD_DEVICE" | tee -a "$LOG"
-sudo swapon -p 1 "$NBD_DEVICE" | tee -a "$LOG"
+sudo swapon -p "$SWAP_PRIO" "$NBD_DEVICE" | tee -a "$LOG"
 
 log "Swap enabled"
 sudo swapon --show | tee -a "$LOG"
